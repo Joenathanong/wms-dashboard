@@ -16,7 +16,6 @@ interface POItem {
   "OCS Code": string;
   "Quantity PO": string;
   "Remark PO": string;
-  "Total QTY Received": string;
 }
 
 export default function StockMonitor() {
@@ -50,22 +49,18 @@ export default function StockMonitor() {
       const q = search.toLowerCase();
       f = f.filter(s => s["OCS Code"]?.toLowerCase().includes(q) || s["Item Name"]?.toLowerCase().includes(q));
     }
-    if (filterAlert === "low") f = f.filter(s => parseFloat(s["Qty On Hand"] || "0") < 100 && parseFloat(s["Qty On Hand"] || "0") > 0);
+    if (filterAlert === "low") f = f.filter(s => { const q = parseFloat(s["Qty On Hand"] || "0"); return q > 0 && q < 100; });
     if (filterAlert === "zero") f = f.filter(s => parseFloat(s["Qty On Hand"] || "0") === 0);
     if (filterAlert === "ok") f = f.filter(s => parseFloat(s["Qty On Hand"] || "0") >= 100);
     setFiltered(f);
   }, [stock, search, filterAlert]);
 
-  // Build open PO map
   const openPOMap: Record<string, { qty: number; status: string }> = {};
   po.filter(p => p["Remark PO"] !== "Fulfill").forEach(p => {
-    openPOMap[p["OCS Code"]] = {
-      qty: parseFloat(p["Quantity PO"] || "0"),
-      status: p["Remark PO"],
-    };
+    openPOMap[p["OCS Code"]] = { qty: parseFloat(p["Quantity PO"] || "0"), status: p["Remark PO"] };
   });
 
-  const getStockStatus = (qty: number) => {
+  const getStatus = (qty: number) => {
     if (qty === 0) return { label: "KOSONG", color: "var(--danger)" };
     if (qty < 100) return { label: "LOW", color: "var(--warning)" };
     return { label: "OK", color: "var(--success)" };
@@ -74,24 +69,21 @@ export default function StockMonitor() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploading(true);
-    setMsg("");
+    setUploading(true); setMsg("");
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-      // Try to map common OCS/SAP columns
-      const items = rows.map(r => ({
-        ocs_code: r["OCS Code"] || r["ocs_code"] || r["OCSCode"] || "",
-        sap_code1: r["SAP Code"] || r["SAP Code 1"] || r["SAPCode"] || "",
-        sap_code2: r["SAP Code 2"] || r["SAPCode2"] || "",
+      const items = rows.map((r: any) => ({
+        ocs_code: r["OCS Code"] || r["ocs_code"] || "",
+        sap_code1: r["SAP Code"] || r["SAP Code 1"] || "",
+        sap_code2: r["SAP Code 2"] || "",
         item_name: r["Item Name"] || r["Description"] || r["Deskripsi"] || "",
-        qty_on_hand: String(r["Qty On Hand"] || r["QtyOnHand"] || r["Stock"] || r["qty"] || "0"),
+        qty_on_hand: String(r["Qty On Hand"] || r["QtyOnHand"] || r["Stock"] || "0"),
         uom: r["UOM"] || r["Satuan"] || "PCS",
         last_updated: new Date().toISOString().split("T")[0],
-      })).filter(i => i.ocs_code || i.sap_code1);
+      })).filter((i: any) => i.ocs_code || i.sap_code1);
 
       const res = await fetch("/api/sheets", {
         method: "POST",
@@ -99,110 +91,124 @@ export default function StockMonitor() {
         body: JSON.stringify({ action: "update_stock", items }),
       });
       const json = await res.json();
-      if (json.success) {
-        setMsg(`✓ Upload ${items.length} item stock berhasil`);
-        load();
-      } else setMsg(`✗ ${json.error}`);
-    } catch (err: any) {
-      setMsg(`✗ Error: ${err.message}`);
-    }
-    setUploading(false);
-    e.target.value = "";
+      if (json.success) { setMsg(`✓ Upload ${items.length} item stock berhasil`); load(); }
+      else setMsg(`✗ ${json.error}`);
+    } catch (err: any) { setMsg(`✗ ${err.message}`); }
+    setUploading(false); e.target.value = "";
   };
+
+  const summaryZero = stock.filter(s => parseFloat(s["Qty On Hand"] || "0") === 0).length;
+  const summaryLow  = stock.filter(s => { const q = parseFloat(s["Qty On Hand"] || "0"); return q > 0 && q < 100; }).length;
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif" }}>Stock Monitoring</h1>
-          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>Upload dari SAP / OCS (WMS)</p>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn-primary" onClick={() => fileRef.current?.click()} disabled={uploading}>
-            {uploading ? "⟳ Upload..." : "⬆ Upload Stock (.xlsx)"}
-          </button>
-          <button className="btn-ghost" onClick={load}>↻ Refresh</button>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: "none" }} />
+      <div className="section-header">
+        <div className="section-header-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <h1>Stock Monitoring</h1>
+            <p>Upload dari SAP / OCS (WMS) · {filtered.length} dari {stock.length} items</p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button className="btn-primary" onClick={() => fileRef.current?.click()} disabled={uploading}>
+              {uploading ? <><span className="spin">⟳</span> Upload...</> : "⬆ Upload Stock"}
+            </button>
+            <button className="btn-ghost" onClick={load}>↻</button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: "none" }} />
+          </div>
         </div>
       </div>
 
-      {msg && (
-        <div style={{ padding: "10px 14px", borderRadius: 6, marginBottom: 16, fontSize: 13,
-          background: msg.startsWith("✓") ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
-          border: `1px solid ${msg.startsWith("✓") ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}`,
-          color: msg.startsWith("✓") ? "var(--success)" : "var(--danger)" }}>
-          {msg}
+      {msg && <div className={`alert ${msg.startsWith("✓") ? "alert-success" : "alert-danger"}`} style={{ marginBottom: 14 }}>{msg}</div>}
+
+      {/* Summary chips */}
+      {stock.length > 0 && (summaryZero > 0 || summaryLow > 0) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          {summaryZero > 0 && (
+            <button onClick={() => setFilterAlert(filterAlert === "zero" ? "all" : "zero")}
+              style={{ padding: "6px 12px", borderRadius: 20, fontSize: 12, fontFamily: "inherit", cursor: "pointer",
+                background: filterAlert === "zero" ? "var(--danger)" : "rgba(239,68,68,0.12)",
+                color: filterAlert === "zero" ? "#fff" : "var(--danger)",
+                border: "1px solid rgba(239,68,68,0.3)" }}>
+              🔴 {summaryZero} item kosong
+            </button>
+          )}
+          {summaryLow > 0 && (
+            <button onClick={() => setFilterAlert(filterAlert === "low" ? "all" : "low")}
+              style={{ padding: "6px 12px", borderRadius: 20, fontSize: 12, fontFamily: "inherit", cursor: "pointer",
+                background: filterAlert === "low" ? "var(--warning)" : "rgba(245,158,11,0.12)",
+                color: filterAlert === "low" ? "#000" : "var(--warning)",
+                border: "1px solid rgba(245,158,11,0.3)" }}>
+              🟡 {summaryLow} item low stock
+            </button>
+          )}
         </div>
       )}
 
-      {/* Info box for dual SKU */}
-      <div className="glass" style={{ borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 12, borderLeft: "3px solid var(--accent2)" }}>
-        <span style={{ color: "var(--accent2)", fontWeight: 600 }}>ℹ Dual SKU Handling: </span>
-        <span style={{ color: "var(--muted)" }}>
-          1 produk dapat memiliki 2 kode SAP (PP Board & Master Box). Keduanya dipetakan ke 1 OCS Code.
-          Contoh: SAP 1207050305 + 1227050305 → OCS: FYNE-EXTRAIT-AMBER-WOOD
-        </span>
+      <div className="alert alert-info" style={{ marginBottom: 14, fontSize: 12 }}>
+        <span style={{ fontWeight: 600 }}>◈ Dual SKU:</span>
+        {" "}1 produk bisa punya 2 kode SAP (PP Board + Master Box) → 1 OCS Code di WMS
       </div>
 
       {/* Filters */}
-      <div className="glass" style={{ borderRadius: 8, padding: 14, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <input placeholder="Cari OCS Code / Nama Item..." value={search}
-          onChange={e => setSearch(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
-        <select value={filterAlert} onChange={e => setFilterAlert(e.target.value)}>
-          <option value="all">Semua Status Stock</option>
-          <option value="zero">🔴 Kosong (0)</option>
-          <option value="low">🟡 Low (&lt;100)</option>
-          <option value="ok">🟢 OK (≥100)</option>
-        </select>
+      <div className="glass" style={{ borderRadius: 8, padding: 12, marginBottom: 14 }}>
+        <div className="filter-row">
+          <input placeholder="Cari OCS Code / Nama Item..." value={search} onChange={e => setSearch(e.target.value)} />
+          <select value={filterAlert} onChange={e => setFilterAlert(e.target.value)} style={{ width: "auto", minWidth: 160 }}>
+            <option value="all">Semua Status</option>
+            <option value="zero">🔴 Kosong (0)</option>
+            <option value="low">🟡 Low (&lt;100)</option>
+            <option value="ok">🟢 OK (≥100)</option>
+          </select>
+        </div>
       </div>
 
       <div className="glass" style={{ borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
-          <div style={{ padding: 32, textAlign: "center", color: "var(--muted)" }}>Loading...</div>
+          <div style={{ padding: 32, textAlign: "center", color: "var(--muted)" }}><span className="spin" style={{ fontSize: 20 }}>⟳</span></div>
         ) : stock.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
-            <div>Belum ada data stock. Upload file dari SAP/OCS.</div>
-            <div style={{ fontSize: 11, marginTop: 8 }}>Format kolom: OCS Code, SAP Code, SAP Code 2, Item Name, Qty On Hand, UOM</div>
+            <div style={{ fontSize: 13 }}>Belum ada data stock.</div>
+            <div style={{ fontSize: 11, marginTop: 6 }}>Kolom: OCS Code, SAP Code, SAP Code 2, Item Name, Qty On Hand, UOM</div>
           </div>
         ) : (
-          <div style={{ overflowX: "auto", maxHeight: "62vh", overflowY: "auto" }}>
+          <div className="table-wrap" style={{ maxHeight: "62vh", overflowY: "auto" }}>
             <table>
               <thead>
                 <tr>
                   <th>OCS Code</th><th>SAP Code 1</th><th>SAP Code 2</th>
                   <th>Item Name</th><th>Qty On Hand</th><th>UOM</th>
-                  <th>Open PO</th><th>Status Stock</th><th>Last Updated</th>
+                  <th>Open PO</th><th>Status</th><th>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((item, i) => {
                   const qty = parseFloat(item["Qty On Hand"] || "0");
-                  const status = getStockStatus(qty);
+                  const status = getStatus(qty);
                   const openPO = openPOMap[item["OCS Code"]];
                   return (
                     <tr key={i}>
-                      <td style={{ fontWeight: 600 }}>{item["OCS Code"]}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: 11 }}>{item["SAP Code 1"]}</td>
-                      <td style={{ fontFamily: "monospace", fontSize: 11, color: "var(--muted)" }}>{item["SAP Code 2"]}</td>
+                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{item["OCS Code"]}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: 11, color: "var(--accent)", whiteSpace: "nowrap" }}>{item["SAP Code 1"]}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: 11, color: "var(--accent2)", whiteSpace: "nowrap" }}>{item["SAP Code 2"]}</td>
                       <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item["Item Name"]}</td>
                       <td style={{ fontWeight: 700, color: status.color, fontSize: 14 }}>{qty.toLocaleString()}</td>
                       <td style={{ color: "var(--muted)", fontSize: 11 }}>{item["UOM"]}</td>
                       <td>
                         {openPO ? (
-                          <div style={{ fontSize: 11 }}>
+                          <span style={{ fontSize: 11 }}>
                             <span style={{ color: "var(--warning)", fontWeight: 600 }}>{openPO.qty.toLocaleString()}</span>
-                            <span style={{ color: "var(--muted)", marginLeft: 4 }}>({openPO.status})</span>
-                          </div>
+                            <span style={{ color: "var(--muted)", marginLeft: 4, fontSize: 10 }}>({openPO.status})</span>
+                          </span>
                         ) : <span style={{ color: "var(--muted)", fontSize: 11 }}>–</span>}
                       </td>
                       <td>
-                        <span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700,
-                          background: `${status.color}20`, color: status.color, border: `1px solid ${status.color}40` }}>
+                        <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 700,
+                          background: `${status.color}18`, color: status.color, border: `1px solid ${status.color}35` }}>
                           {status.label}
                         </span>
                       </td>
-                      <td style={{ fontSize: 11, color: "var(--muted)" }}>{item["Last Updated"]?.slice(0, 10)}</td>
+                      <td style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>{item["Last Updated"]?.slice(0, 10)}</td>
                     </tr>
                   );
                 })}
