@@ -44,7 +44,7 @@ function parseBarcode(raw: string): ParsedBarcode | null {
   return {
     material_code: parts[0]?.trim(),
     batch:         parts[1]?.trim(),
-    uom_type:      parts[2]?.trim(),
+    uom_type:      "PCS",                             // ← always PCS
     qty_default:   cleanQty(parts[3]?.trim() || ""),
     material_name: parts[6]?.trim(),
     warehouse:     parts[7]?.trim() || "",
@@ -167,7 +167,7 @@ export default function PDAReceiving() {
         material_code: parsed.material_code,
         batch:         parsed.batch,
         qty:           String(parseFloat(qty)), // clean format
-        uom:           parsed.uom_type,
+        uom:           "PCS",                   // always PCS
         description:   parsed.material_name,
         received_by:   form.received_by,
         notes:         form.notes,
@@ -187,7 +187,7 @@ export default function PDAReceiving() {
         : ` · ${json.message || ""}`;
       setMsg({ type: "success", text: `✓ GR disimpan!${detail}` });
 
-      // Reset barcode & qty tapi pertahankan form (No.PO, SJ, Shift, nama)
+      // ── Reset HANYA barcode + qty. Form (PO, SJ, Shift, nama) tetap untuk scan item berikutnya.
       setBarcodeInput("");
       setParsed(null);
       setQty("");
@@ -199,8 +199,8 @@ export default function PDAReceiving() {
     }
   };
 
-  // ── Reset all ───────────────────────────────────────────────────────────────
-  const handleReset = () => {
+  // ── Reset All ───────────────────────────────────────────────────────────────
+  const handleResetAll = () => {
     setBarcodeInput(""); setParsed(null); setQty("");
     setForm(EMPTY_FORM); setPOSearch(""); setMsg(null);
     setTimeout(() => inputRef.current?.focus(), 120);
@@ -324,7 +324,8 @@ export default function PDAReceiving() {
                 <div>
                   <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 5,
                     textTransform: "uppercase", letterSpacing: "0.06em" }}>UOM</label>
-                  <input value={parsed?.uom_type || ""} readOnly style={{ textAlign: "center" }} />
+                  {/* Always PCS */}
+                  <input value="PCS" readOnly style={{ textAlign: "center", fontWeight: 700, color: "var(--accent)" }} />
                 </div>
               </div>
 
@@ -451,10 +452,16 @@ export default function PDAReceiving() {
                     ? <><span className="spin">⟳</span> Menyimpan...</>
                     : "✓ Simpan GR"}
                 </button>
-                <button className="btn-ghost" onClick={handleReset} title="Reset semua field"
-                  style={{ padding: "13px 14px" }}>
-                  ↺
+                <button
+                  className="btn-ghost"
+                  onClick={handleResetAll}
+                  title="Reset semua field (ganti sesi / SJ baru)"
+                  style={{ padding: "13px 14px", flexShrink: 0 }}>
+                  ↺ Reset
                 </button>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 8, textAlign: "center" }}>
+                Setelah simpan: barcode &amp; jumlah di-reset otomatis · PO/SJ/Shift/Nama tetap
               </div>
             </div>
           </div>
